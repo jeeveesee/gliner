@@ -3,3 +3,4 @@ torch
 onnxruntime
 pandas
 jupyterlab
+tqdm
