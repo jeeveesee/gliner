@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 onnx_export/
+configs/thresholds.tuned.json
 .ipynb_checkpoints/
 target/
 project/target/

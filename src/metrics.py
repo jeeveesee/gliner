@@ -59,3 +59,52 @@ def evaluate(
     micro = {"precision": micro_p, "recall": micro_r, "f1": micro_f1}
 
     return rows, micro, macro
+
+
+def sweep_thresholds(
+    gold_label_sets: list[list[str]],
+    canonical_scores: list[dict[str, float]],
+    labels: list[str],
+    grid: list[float] | None = None,
+) -> list[dict]:
+    """Per-label threshold sweep: for each canonical label, scan `grid` and
+    keep the threshold with the best F1 (ties broken toward higher recall).
+    Each label is optimized independently -- they don't have to move together.
+
+    Args:
+        gold_label_sets: one list of canonical label names per document.
+        canonical_scores: one {label: score} dict per document -- the same
+            per-canonical-label score `evaluate`'s predictions were
+            thresholded from, collected once and reused here (no re-running
+            the model). A label missing from a doc's dict is treated as 0.0.
+        labels: canonical label universe to sweep.
+        grid: candidate thresholds; defaults to 0.05..0.95 in steps of 0.05.
+
+    Returns:
+        One row per label: {label, threshold, precision, recall, f1}.
+
+    Note: this tunes thresholds on the same data you're evaluating on, which
+    overfits to that harness. Prefer sweeping on a held-out split of the
+    harness (or a separate one) and only trusting the number on data the
+    threshold wasn't picked from.
+    """
+    if grid is None:
+        grid = [round(i / 100, 2) for i in range(5, 100, 5)]
+
+    rows = []
+    for label in labels:
+        gold = [label in set(g) for g in gold_label_sets]
+        scores = [s.get(label, 0.0) for s in canonical_scores]
+        best = None
+        for t in grid:
+            pred = [s >= t for s in scores]
+            tp = sum(g and p for g, p in zip(gold, pred))
+            fp = sum(p and not g for g, p in zip(gold, pred))
+            fn = sum(g and not p for g, p in zip(gold, pred))
+            precision = tp / (tp + fp) if (tp + fp) else 0.0
+            recall = tp / (tp + fn) if (tp + fn) else 0.0
+            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+            if best is None or f1 > best["f1"] or (f1 == best["f1"] and recall > best["recall"]):
+                best = {"label": label, "threshold": t, "precision": precision, "recall": recall, "f1": f1}
+        rows.append(best)
+    return rows
