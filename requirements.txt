@@ -1,0 +1,5 @@
+gliner>=0.2.29
+torch
+onnxruntime
+pandas
+jupyterlab
