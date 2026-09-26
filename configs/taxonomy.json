@@ -1,0 +1,159 @@
+{
+  "name": "helio-pii",
+  "version": "4.0.0",
+  "task": "multi-label-classification",
+  "description": "Versioned labels for text that contains personally identifiable or protected health information. Text with no sensitive category is represented by an empty labels array.",
+  "labels": [
+    {
+      "id": 0,
+      "name": "name",
+      "description": "A person's name or directly identifying personal designation.",
+      "prompt_labels": [
+        "person name",
+        "patient name",
+        "provider name",
+        "caregiver name",
+        "patient full name",
+        "provider full name"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "email",
+      "description": "An email address.",
+      "prompt_labels": [
+        "email address",
+        "patient email address",
+        "provider email address",
+        "contact email address"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "phone",
+      "description": "A telephone or mobile contact number.",
+      "prompt_labels": [
+        "phone number",
+        "patient phone number",
+        "provider phone number",
+        "contact phone number"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "address",
+      "description": "A mailing, home, or billing street address.",
+      "prompt_labels": [
+        "home address",
+        "mailing address",
+        "billing address",
+        "patient address"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "date",
+      "description": "A date tied to a person, such as a birth date, appointment, or prescription date.",
+      "prompt_labels": [
+        "date of birth",
+        "appointment date",
+        "prescription date",
+        "patient date of birth"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "ssn",
+      "description": "A social security number.",
+      "prompt_labels": [
+        "social security number",
+        "patient social security number"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "mrn",
+      "description": "A medical record number or chart identifier.",
+      "prompt_labels": [
+        "medical record number",
+        "patient medical record number",
+        "chart number"
+      ]
+    },
+    {
+      "id": 7,
+      "name": "diagnosis",
+      "description": "A medical condition or diagnosis attributed to a person.",
+      "prompt_labels": [
+        "medical diagnosis",
+        "clinical diagnosis",
+        "diagnosed condition"
+      ]
+    },
+    {
+      "id": 8,
+      "name": "npi",
+      "description": "A National Provider Identifier number.",
+      "prompt_labels": [
+        "national provider identifier",
+        "provider npi number"
+      ]
+    },
+    {
+      "id": 9,
+      "name": "insurance_id",
+      "description": "A health insurance member or payer identification number.",
+      "prompt_labels": [
+        "health insurance id number",
+        "insurance member id",
+        "payer id number"
+      ]
+    },
+    {
+      "id": 10,
+      "name": "account_id",
+      "description": "A patient or customer account identifier used for billing.",
+      "prompt_labels": [
+        "patient account number",
+        "billing account id",
+        "customer account id"
+      ]
+    },
+    {
+      "id": 11,
+      "name": "program_id",
+      "description": "An enrollment identifier for a patient support or assistance program.",
+      "prompt_labels": [
+        "program enrollment id",
+        "patient assistance program id"
+      ]
+    },
+    {
+      "id": 12,
+      "name": "copay_card_id",
+      "description": "A copay assistance card identifier.",
+      "prompt_labels": [
+        "copay card id",
+        "copay assistance card number"
+      ]
+    },
+    {
+      "id": 13,
+      "name": "credit_card",
+      "description": "A credit or payment card number.",
+      "prompt_labels": [
+        "credit card number",
+        "payment card number"
+      ]
+    },
+    {
+      "id": 14,
+      "name": "age",
+      "description": "A person's age.",
+      "prompt_labels": [
+        "person's age",
+        "patient age"
+      ]
+    }
+  ]
+}

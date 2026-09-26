@@ -1,41 +1,38 @@
-"""Exact-span precision/recall(sensitivity)/F1, per-label + micro/macro."""
+"""Precision/recall(sensitivity)/F1 for multi-label classification, per-label
++ micro/macro. Matches the helio-pii test harness: each document has a gold
+`labels` list (canonical names, empty == non-PII) to compare against the
+predicted label set for that same document.
+"""
 
 from __future__ import annotations
 
 
-def _span_key(ent: dict) -> tuple[int, int, str]:
-    return (ent["start"], ent["end"], ent["label"])
-
-
 def evaluate(
-    gold_docs: list[list[dict]],
-    pred_docs: list[list[dict]],
+    gold_label_sets: list[list[str]],
+    pred_label_sets: list[list[str]],
     labels: list[str],
 ) -> tuple[list[dict], dict, dict]:
-    """Exact (start, end, label) match scoring.
-
+    """
     Args:
-        gold_docs: one list of {start, end, label} dicts per document (ground truth).
-        pred_docs: one list of {start, end, label} dicts per document (model output).
-        labels: label universe to report on.
+        gold_label_sets: one list of canonical label names per document (ground truth).
+        pred_label_sets: one list of canonical label names per document (model output).
+        labels: canonical label universe to report on.
 
     Returns:
         (per_label_rows, micro_totals, macro_totals)
     """
     counts = {label: {"tp": 0, "fp": 0, "fn": 0} for label in labels}
 
-    for gold, pred in zip(gold_docs, pred_docs):
-        gold_set = {_span_key(e) for e in gold}
-        pred_set = {_span_key(e) for e in pred}
-
-        for key in pred_set:
-            if key[2] not in counts:
-                continue
-            counts[key[2]]["tp" if key in gold_set else "fp"] += 1
-
-        for key in gold_set - pred_set:
-            if key[2] in counts:
-                counts[key[2]]["fn"] += 1
+    for gold, pred in zip(gold_label_sets, pred_label_sets):
+        gold_set, pred_set = set(gold), set(pred)
+        for label in labels:
+            in_gold, in_pred = label in gold_set, label in pred_set
+            if in_gold and in_pred:
+                counts[label]["tp"] += 1
+            elif in_pred and not in_gold:
+                counts[label]["fp"] += 1
+            elif in_gold and not in_pred:
+                counts[label]["fn"] += 1
 
     rows = []
     for label, c in counts.items():

@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "status": "initial-operating-profile",
+  "model": "urchade/gliner_large-v2.1",
+  "taxonomy": "configs/taxonomy.json",
+  "default_threshold": 0.5,
+  "thresholds": {
+    "name": 0.5,
+    "email": 0.5,
+    "phone": 0.35,
+    "address": 0.5,
+    "date": 0.35,
+    "ssn": 0.5,
+    "mrn": 0.5,
+    "diagnosis": 0.5,
+    "npi": 0.35,
+    "insurance_id": 0.5,
+    "account_id": 0.5,
+    "program_id": 0.35,
+    "copay_card_id": 0.35,
+    "credit_card": 0.5,
+    "age": 0.5
+  }
+}

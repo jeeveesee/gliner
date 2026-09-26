@@ -15,11 +15,15 @@ import scala.jdk.CollectionConverters._
   */
 case class Entity(start: Int, end: Int, label: String, score: Double, source: String)
 
-/** Loads the ONNX graph produced by `src/export_onnx.py` and reproduces
-  * GLiNER's own preprocessing (prompt construction, word splitting, span
-  * enumeration) around each input text, exactly as the Python
-  * `gliner.data_processing` module does it for the `UniEncoderSpan`
-  * architecture (the one behind `urchade/gliner_large-v2.1`).
+/** Loads the ONNX graph + `prompts.json`/`taxonomy.json`/`thresholds.json`
+  * produced by `src/export_onnx.py`, and reproduces GLiNER's own
+  * preprocessing (prompt construction, word splitting, span enumeration)
+  * around each input text, exactly as the Python `gliner.data_processing`
+  * module does it for the `UniEncoderSpan` architecture (the one behind
+  * `urchade/gliner_large-v2.1`). Output entities carry the *canonical*
+  * taxonomy label name (e.g. "name"), not the raw GLiNER prompt string
+  * that fired (e.g. "provider name") -- that's what `thresholds.json` is
+  * keyed by.
   *
   * IMPORTANT: before trusting this in production, run it over a handful of
   * documents and diff `input_ids` / decoded entities against the Python
@@ -35,14 +39,35 @@ class GlinerPiiScorer(modelDir: String, maxWidthOverride: Option[Int] = None) {
     env.createSession(Paths.get(modelDir, "gliner_pii.onnx").toString, new OrtSession.SessionOptions())
   private val tokenizer = HuggingFaceTokenizer.newInstance(Paths.get(modelDir))
 
-  private val labels: Array[String] =
-    mapper.readValue(Paths.get(modelDir, "labels.json").toFile, classOf[Array[String]])
+  // prompts.json is the frozen, ordered flattening of taxonomy.json's
+  // per-label `prompt_labels` -- this order == the ONNX output class order,
+  // so it must come from the file the export step wrote, not be re-derived.
+  private val prompts: Array[String] =
+    mapper.readValue(Paths.get(modelDir, "prompts.json").toFile, classOf[Array[String]])
 
-  private val thresholdsByLabel: Map[String, Double] = mapper
-    .readValue(Paths.get(modelDir, "thresholds.json").toFile, new TypeReference[java.util.Map[String, Double]] {})
-    .asScala
-    .toMap
-  private val thresholds: Array[Double] = labels.map(thresholdsByLabel)
+  private val taxonomyNode = mapper.readTree(Paths.get(modelDir, "taxonomy.json").toFile)
+  private val thresholdsNode = mapper.readTree(Paths.get(modelDir, "thresholds.json").toFile)
+
+  private val defaultThreshold: Double =
+    Option(thresholdsNode.get("default_threshold")).fold(0.5)(_.asDouble())
+
+  private val thresholdsByCanonical: Map[String, Double] = {
+    val node = thresholdsNode.get("thresholds")
+    node.fieldNames().asScala.map(name => name -> node.get(name).asDouble()).toMap
+  }
+  private def thresholdFor(canonical: String): Double = thresholdsByCanonical.getOrElse(canonical, defaultThreshold)
+
+  // prompt string (a GLiNER label) -> its canonical taxonomy label name.
+  private val canonicalOfPrompt: Map[String, String] = {
+    val buf = scala.collection.mutable.Map[String, String]()
+    taxonomyNode.get("labels").elements().asScala.foreach { labelNode =>
+      val canonical = labelNode.get("name").asText()
+      labelNode.get("prompt_labels").elements().asScala.foreach(p => buf(p.asText()) = canonical)
+    }
+    buf.toMap
+  }
+  // Parallel to `prompts`: canonicalOfClass(classIndex) == canonical label name.
+  private val canonicalOfClass: Array[String] = prompts.map(p => canonicalOfPrompt.getOrElse(p, p))
 
   private val glinerConfig: java.util.Map[String, Object] = mapper
     .readValue(Paths.get(modelDir, "gliner_config.json").toFile, new TypeReference[java.util.Map[String, Object]] {})
@@ -63,8 +88,8 @@ class GlinerPiiScorer(modelDir: String, maxWidthOverride: Option[Int] = None) {
     buf.toArray
   }
 
-  // Prompt words shared by every call: [ENT] label1 [ENT] label2 ... [SEP]
-  private val promptWords: Array[String] = labels.flatMap(l => Array(entToken, l)) :+ sepToken
+  // Prompt words shared by every call: [ENT] prompt1 [ENT] prompt2 ... [SEP]
+  private val promptWords: Array[String] = prompts.flatMap(p => Array(entToken, p)) :+ sepToken
   private val numPromptWords = promptWords.length
 
   private def sigmoid(x: Float): Double = 1.0 / (1.0 + math.exp(-x))
@@ -145,9 +170,17 @@ class GlinerPiiScorer(modelDir: String, maxWidthOverride: Option[Int] = None) {
       val candidates = ArrayBuffer[(Int, Int, String, Double)]()
       for (start <- logits.indices; width <- logits(start).indices if start + width < numWords) {
         val classScores = logits(start)(width)
-        for (c <- labels.indices) {
+        // Several prompt variants can map to the same canonical label
+        // (e.g. "patient name" and "provider name" both -> "name"); take the
+        // best-scoring variant per canonical label before thresholding.
+        val bestPerCanonical = scala.collection.mutable.Map[String, Double]()
+        for (c <- prompts.indices) {
           val score = sigmoid(classScores(c))
-          if (score >= thresholds(c)) candidates += ((start, start + width, labels(c), score))
+          val canonical = canonicalOfClass(c)
+          if (score > bestPerCanonical.getOrElse(canonical, -1.0)) bestPerCanonical(canonical) = score
+        }
+        for ((canonical, score) <- bestPerCanonical if score >= thresholdFor(canonical)) {
+          candidates += ((start, start + width, canonical, score))
         }
       }
 
@@ -163,10 +196,10 @@ class GlinerPiiScorer(modelDir: String, maxWidthOverride: Option[Int] = None) {
   // Regex backstop: catches obvious PII the model missed, unioned with the
   // model output rather than replacing it, to maximize recall.
   private val regexLabels: Seq[(String, Pattern)] = Seq(
-    "email address" -> Pattern.compile("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"),
-    "phone number" -> Pattern.compile("(?:\\(\\d{3}\\)\\s?|\\d{3}[-.\\s])\\d{3}[-.\\s]\\d{4}"),
-    "social security number" -> Pattern.compile("\\b\\d{3}-\\d{2}-\\d{4}\\b"),
-    "credit card number" -> Pattern.compile("\\b(?:\\d[ -]?){13,16}\\b")
+    "email" -> Pattern.compile("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"),
+    "phone" -> Pattern.compile("(?:\\(\\d{3}\\)\\s?|\\d{3}[-.\\s])\\d{3}[-.\\s]\\d{4}"),
+    "ssn" -> Pattern.compile("\\b\\d{3}-\\d{2}-\\d{4}\\b"),
+    "credit_card" -> Pattern.compile("\\b(?:\\d[ -]?){13,16}\\b")
   )
 
   private def regexEntities(text: String, alreadyCovered: Seq[(Int, Int)]): Seq[Entity] = {
