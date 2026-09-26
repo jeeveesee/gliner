@@ -31,12 +31,18 @@ case class Entity(start: Int, end: Int, label: String, score: Double, source: St
   * particular backbone tokenizer marks leading-space/word boundaries) are
   * worth confirming once rather than assuming.
   */
-class GlinerPiiScorer(modelDir: String, maxWidthOverride: Option[Int] = None) {
+class GlinerPiiScorer(modelDir: String, maxWidthOverride: Option[Int] = None, useCuda: Boolean = false) {
 
   private val mapper = new ObjectMapper()
   private val env = OrtEnvironment.getEnvironment
-  private val session: OrtSession =
-    env.createSession(Paths.get(modelDir, "gliner_pii.onnx").toString, new OrtSession.SessionOptions())
+  private val session: OrtSession = {
+    val options = new OrtSession.SessionOptions()
+    // CPU by default. useCuda=true requires the onnxruntime_gpu artifact
+    // (see build.sbt) and a CUDA-capable ONNX Runtime install -- with the
+    // plain CPU artifact this throws OrtException rather than falling back.
+    if (useCuda) options.addCUDA(0)
+    env.createSession(Paths.get(modelDir, "gliner_pii.onnx").toString, options)
+  }
   private val tokenizer = HuggingFaceTokenizer.newInstance(Paths.get(modelDir))
 
   // prompts.json is the frozen, ordered flattening of taxonomy.json's
