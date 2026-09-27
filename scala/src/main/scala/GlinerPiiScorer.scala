@@ -90,8 +90,16 @@ class GlinerPiiScorer(modelDir: String, maxWidthOverride: Option[Int] = None, us
   }
 
   // Extra checks beyond a plain regex, for labels with a real checksum
-  // digit -- a regex only checks shape ("10 digits"), the checksum checks
-  // the last digit is mathematically consistent with the rest. Mirrors
+  // digit -- a regex only checks shape ("10 digits"), a checksum checks
+  // the last digit is mathematically consistent with the rest. That makes
+  // it strict in a way a regex can't be, which is also why it's dangerous
+  // to apply blindly: it requires the EXACT real math to work, so it
+  // silently rejects a genuine value with one stray character, or an
+  // entire synthetic test set whose fake numbers were never computed to be
+  // checksum-valid (a real credit card always passes Luhn; a placeholder
+  // typed for a test fixture usually doesn't). Keyed by ALGORITHM name and
+  // opt-in via each label's `validation_checksum` in taxonomy.json --
+  // nothing here runs unless a label asks for it by name. Mirrors
   // src/validators.py; keep both in sync if you change one.
   private def luhnOk(digits: String): Boolean = {
     var total = 0
@@ -111,17 +119,27 @@ class GlinerPiiScorer(modelDir: String, maxWidthOverride: Option[Int] = None, us
     val digits = text.replaceAll("[ -]", "")
     digits.forall(_.isDigit) && digits.length >= 13 && digits.length <= 19 && luhnOk(digits)
   }
-  private val checksums: Map[String, String => Boolean] =
-    Map("npi" -> npiChecksumOk, "credit_card" -> creditCardChecksumOk)
+  private val checksumsByName: Map[String, String => Boolean] =
+    Map("npi_luhn" -> npiChecksumOk, "luhn" -> creditCardChecksumOk)
+
+  private val validationChecksum: Map[String, String] = {
+    val buf = scala.collection.mutable.Map[String, String]()
+    taxonomyNode.get("labels").elements().asScala.foreach { labelNode =>
+      Option(labelNode.get("validation_checksum")).foreach(node => buf(labelNode.get("name").asText()) = node.asText())
+    }
+    buf.toMap
+  }
 
   /** Format-check a flagged span's exact text for a canonical label that
-    * has a fixed shape. A label with no validation_regex and no checksum
-    * always passes -- there's nothing to check it against.
+    * has a fixed shape. A label with no validation_regex/checksum always
+    * passes -- there's nothing to check it against. Strips surrounding
+    * punctuation first (a trailing "." from the end of a sentence
+    * shouldn't fail an otherwise-correct match).
     */
   private def isValid(canonical: String, rawText: String): Boolean = {
-    val text = rawText.trim
+    val text = rawText.trim.replaceAll("^[.,;:()\"']+|[.,;:()\"']+$", "")
     val regexOk = validationRegex.get(canonical).forall(_.matcher(text).matches())
-    val checksumOk = checksums.get(canonical).forall(_(text))
+    val checksumOk = validationChecksum.get(canonical).flatMap(checksumsByName.get).forall(_(text))
     regexOk && checksumOk
   }
 
@@ -271,10 +289,15 @@ class GlinerPiiScorer(modelDir: String, maxWidthOverride: Option[Int] = None, us
       val m = pattern.matcher(text)
       while (m.find()) {
         val span = (m.start(), m.end())
-        // credit_card has no validation_regex (it's a recall problem, not a
-        // precision one) but still needs the Luhn checksum here, since "13-16
-        // digits somewhere in the text" alone matches plenty of non-cards too.
-        if (!alreadyCovered.exists(overlaps(_, span)) && isValid(label, m.group())) {
+        val matched = m.group()
+        // The Luhn gate on credit_card is applied here directly (not through
+        // isValid's opt-in checksum) because a backstop only ever ADDS a
+        // finding, so a strict checksum can't make recall worse than not
+        // having a backstop at all -- unlike gating the model's own
+        // detections, which is exactly what caused credit_card/ssn/npi to
+        // collapse to zero when the checksum was applied there.
+        val creditCardOk = label != "credit_card" || creditCardChecksumOk(matched)
+        if (!alreadyCovered.exists(overlaps(_, span)) && isValid(label, matched) && creditCardOk) {
           hits += Entity(span._1, span._2, label, 1.0, "regex")
         }
       }

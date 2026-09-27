@@ -57,17 +57,34 @@ class Taxonomy:
         shape to check against -- there's nothing to add here for them."""
         return {label["name"]: label["validation_regex"] for label in self.labels if label.get("validation_regex")}
 
+    @property
+    def validation_checksum(self) -> dict[str, str]:
+        """Canonical labels that additionally require a named checksum
+        (see validators.CHECKSUMS), from each label's optional
+        `validation_checksum` field. Opt-in and off by default: a checksum
+        requires the exact real math to work, so turning it on for data it
+        hasn't been checked against (e.g. a synthetic test harness whose
+        fake numbers were never computed to be checksum-valid) can silently
+        zero out recall instead of cleaning up precision."""
+        return {
+            label["name"]: label["validation_checksum"] for label in self.labels if label.get("validation_checksum")
+        }
+
     def is_valid(self, canonical: str, text: str) -> bool:
         """Format-check a flagged span's exact text for a canonical label
-        that has a fixed shape. A label with no validation_regex and no
-        checksum always passes -- there's nothing to check it against."""
-        text = text.strip()
+        that has a fixed shape. A label with no validation_regex/checksum
+        always passes -- there's nothing to check it against. Strips
+        surrounding punctuation first (a trailing "." from the end of a
+        sentence shouldn't fail an otherwise-correct match)."""
+        text = text.strip().strip(".,;:()\"'")
         pattern = self.validation_regex.get(canonical)
         if pattern and not re.fullmatch(pattern, text):
             return False
-        checksum = CHECKSUMS.get(canonical)
-        if checksum and not checksum(text):
-            return False
+        checksum_name = self.validation_checksum.get(canonical)
+        if checksum_name:
+            checksum = CHECKSUMS.get(checksum_name)
+            if checksum and not checksum(text):
+                return False
         return True
 
 
