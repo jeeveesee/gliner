@@ -71,7 +71,7 @@
         "social security number",
         "patient social security number"
       ],
-      "validation_regex": "^\\d{3}-\\d{2}-\\d{4}$"
+      "validation_regex": "^\\d{3}[-.\\s]?\\d{2}[-.\\s]?\\d{4}$"
     },
     {
       "id": 6,
