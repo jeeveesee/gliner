@@ -75,6 +75,56 @@ class GlinerPiiScorer(modelDir: String, maxWidthOverride: Option[Int] = None, us
   // Parallel to `prompts`: canonicalOfClass(classIndex) == canonical label name.
   private val canonicalOfClass: Array[String] = prompts.map(p => canonicalOfPrompt.getOrElse(p, p))
 
+  // Canonical labels with a fixed, checkable shape (email, phone, ssn,
+  // npi, ...), from each label's optional `validation_regex` in
+  // taxonomy.json. Labels without one (name, diagnosis, ...) have no fixed
+  // shape to check against, so isValid() below always passes them.
+  private val validationRegex: Map[String, Pattern] = {
+    val buf = scala.collection.mutable.Map[String, Pattern]()
+    taxonomyNode.get("labels").elements().asScala.foreach { labelNode =>
+      Option(labelNode.get("validation_regex")).foreach { regexNode =>
+        buf(labelNode.get("name").asText()) = Pattern.compile(regexNode.asText())
+      }
+    }
+    buf.toMap
+  }
+
+  // Extra checks beyond a plain regex, for labels with a real checksum
+  // digit -- a regex only checks shape ("10 digits"), the checksum checks
+  // the last digit is mathematically consistent with the rest. Mirrors
+  // src/validators.py; keep both in sync if you change one.
+  private def luhnOk(digits: String): Boolean = {
+    var total = 0
+    for (i <- digits.indices) {
+      var d = digits(digits.length - 1 - i) - '0'
+      if (i % 2 == 1) {
+        d *= 2
+        if (d > 9) d -= 9
+      }
+      total += d
+    }
+    total % 10 == 0
+  }
+  private def npiChecksumOk(text: String): Boolean =
+    text.length == 10 && text.forall(_.isDigit) && luhnOk("80840" + text)
+  private def creditCardChecksumOk(text: String): Boolean = {
+    val digits = text.replaceAll("[ -]", "")
+    digits.forall(_.isDigit) && digits.length >= 13 && digits.length <= 19 && luhnOk(digits)
+  }
+  private val checksums: Map[String, String => Boolean] =
+    Map("npi" -> npiChecksumOk, "credit_card" -> creditCardChecksumOk)
+
+  /** Format-check a flagged span's exact text for a canonical label that
+    * has a fixed shape. A label with no validation_regex and no checksum
+    * always passes -- there's nothing to check it against.
+    */
+  private def isValid(canonical: String, rawText: String): Boolean = {
+    val text = rawText.trim
+    val regexOk = validationRegex.get(canonical).forall(_.matcher(text).matches())
+    val checksumOk = checksums.get(canonical).forall(_(text))
+    regexOk && checksumOk
+  }
+
   private val glinerConfig: java.util.Map[String, Object] = mapper
     .readValue(Paths.get(modelDir, "gliner_config.json").toFile, new TypeReference[java.util.Map[String, Object]] {})
   private val entToken: String = Option(glinerConfig.get("ent_token")).fold("[ENT]")(_.toString)
@@ -190,7 +240,14 @@ class GlinerPiiScorer(modelDir: String, maxWidthOverride: Option[Int] = None, us
         }
       }
 
-      greedyResolve(candidates.toSeq).map { case (wStart, wEnd, label, score) =>
+      // Reject a span whose exact text doesn't pass its canonical label's
+      // format check (e.g. the model calls something "email" but it has no
+      // @ and domain) -- no matter how confident the model was.
+      val validCandidates = candidates.filter { case (s, e, canonical, _) =>
+        isValid(canonical, text.substring(words(s).start, words(e).end))
+      }
+
+      greedyResolve(validCandidates.toSeq).map { case (wStart, wEnd, label, score) =>
         Entity(words(wStart).start, words(wEnd).end, label, score, "model")
       }
     } finally {
@@ -214,7 +271,10 @@ class GlinerPiiScorer(modelDir: String, maxWidthOverride: Option[Int] = None, us
       val m = pattern.matcher(text)
       while (m.find()) {
         val span = (m.start(), m.end())
-        if (!alreadyCovered.exists(overlaps(_, span))) {
+        // credit_card has no validation_regex (it's a recall problem, not a
+        // precision one) but still needs the Luhn checksum here, since "13-16
+        // digits somewhere in the text" alone matches plenty of non-cards too.
+        if (!alreadyCovered.exists(overlaps(_, span)) && isValid(label, m.group())) {
           hits += Entity(span._1, span._2, label, 1.0, "regex")
         }
       }

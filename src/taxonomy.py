@@ -13,13 +13,16 @@ label without an explicit entry.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
+
+from validators import CHECKSUMS
 
 
 @dataclass(frozen=True)
 class Taxonomy:
-    labels: list[dict]  # raw entries: {id, name, description, prompt_labels}
+    labels: list[dict]  # raw entries: {id, name, description, prompt_labels, validation_regex?}
     thresholds: dict[str, float]
     default_threshold: float
 
@@ -45,6 +48,27 @@ class Taxonomy:
         """Lowest threshold in play -- use as GLiNER's single `threshold=`
         arg, then re-filter per canonical label threshold afterwards."""
         return min([*self.thresholds.values(), self.default_threshold])
+
+    @property
+    def validation_regex(self) -> dict[str, str]:
+        """Canonical labels with a fixed, checkable shape (email, phone,
+        ssn, npi, ...), from each label's optional `validation_regex`.
+        Labels without one (name, diagnosis, address, ...) have no fixed
+        shape to check against -- there's nothing to add here for them."""
+        return {label["name"]: label["validation_regex"] for label in self.labels if label.get("validation_regex")}
+
+    def is_valid(self, canonical: str, text: str) -> bool:
+        """Format-check a flagged span's exact text for a canonical label
+        that has a fixed shape. A label with no validation_regex and no
+        checksum always passes -- there's nothing to check it against."""
+        text = text.strip()
+        pattern = self.validation_regex.get(canonical)
+        if pattern and not re.fullmatch(pattern, text):
+            return False
+        checksum = CHECKSUMS.get(canonical)
+        if checksum and not checksum(text):
+            return False
+        return True
 
 
 def load_taxonomy(taxonomy_path: str | Path, thresholds_path: str | Path) -> Taxonomy:

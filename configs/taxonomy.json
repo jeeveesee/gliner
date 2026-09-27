@@ -26,7 +26,8 @@
         "patient email address",
         "provider email address",
         "contact email address"
-      ]
+      ],
+      "validation_regex": "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$"
     },
     {
       "id": 2,
@@ -37,7 +38,8 @@
         "patient phone number",
         "provider phone number",
         "contact phone number"
-      ]
+      ],
+      "validation_regex": "^\\+?1?[-.\\s]?\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4}$"
     },
     {
       "id": 3,
@@ -68,7 +70,8 @@
       "prompt_labels": [
         "social security number",
         "patient social security number"
-      ]
+      ],
+      "validation_regex": "^\\d{3}-\\d{2}-\\d{4}$"
     },
     {
       "id": 6,
@@ -97,7 +100,8 @@
       "prompt_labels": [
         "national provider identifier",
         "provider npi number"
-      ]
+      ],
+      "validation_regex": "^\\d{10}$"
     },
     {
       "id": 9,
